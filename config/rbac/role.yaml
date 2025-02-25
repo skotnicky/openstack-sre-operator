@@ -1,0 +1,54 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: manager-role
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  verbs:
+  - create
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - nodes
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - openstack.example.com
+  - openstack.taikun.cloud
+  resources:
+  - openstacksres
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - openstack.example.com
+  - openstack.taikun.cloud
+  resources:
+  - openstacksres/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - openstack.example.com
+  - openstack.taikun.cloud
+  resources:
+  - openstacksres/status
+  verbs:
+  - get
+  - patch
+  - update
