@@ -15,13 +15,14 @@ import (
     "github.com/gophercloud/gophercloud/openstack/compute/v2/servers"
     corev1 "k8s.io/api/core/v1"
     v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+    "k8s.io/apimachinery/pkg/runtime"
     "k8s.io/apimachinery/pkg/types"
     "sigs.k8s.io/controller-runtime"
     "sigs.k8s.io/controller-runtime/pkg/client"
     "sigs.k8s.io/controller-runtime/pkg/controller"
     "sigs.k8s.io/controller-runtime/pkg/log"
 
-    openstackv1alpha1 "github.com/yourorg/openstack-sre-operator/api/v1alpha1"
+    openstackv1alpha1 "github.com/skotnicky/openstack-sre-operator/api/v1alpha1"
 )
 
 // OpenStackSREReconciler reconciles a OpenStackSRE object
