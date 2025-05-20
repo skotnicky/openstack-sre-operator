@@ -8,7 +8,7 @@ import (
     "k8s.io/apimachinery/pkg/runtime"
     utilruntime "k8s.io/apimachinery/pkg/util/runtime"
     clientgoscheme "k8s.io/client-go/kubernetes/scheme"
-    "sigs.k8s.io/controller-runtime"
+    ctrl "sigs.k8s.io/controller-runtime"
     "sigs.k8s.io/controller-runtime/pkg/log/zap"
 
     openstackv1alpha1 "github.com/skotnicky/openstack-sre-operator/api/v1alpha1"
@@ -16,7 +16,7 @@ import (
 
 var (
     scheme   = runtime.NewScheme()
-    setupLog = controller.Log.WithName("setup")
+    setupLog = ctrl.Log.WithName("setup")
 )
 
 func init() {
@@ -39,7 +39,7 @@ func main() {
 
     ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
-    mgr, err := controller.NewManager(controller.GetConfigOrDie(), controller.Options{
+    mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
         Scheme:                 scheme,
         MetricsBindAddress:     metricsAddr,
         Port:                   9443,
@@ -61,7 +61,7 @@ func main() {
     }
 
     setupLog.Info("starting manager")
-    if err := mgr.Start(controller.SetupSignalHandler()); err != nil {
+    if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
         setupLog.Error(err, "problem running manager")
         os.Exit(1)
     }

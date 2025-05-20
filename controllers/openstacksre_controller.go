@@ -17,9 +17,8 @@ import (
     v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
     "k8s.io/apimachinery/pkg/runtime"
     "k8s.io/apimachinery/pkg/types"
-    "sigs.k8s.io/controller-runtime"
+    ctrl "sigs.k8s.io/controller-runtime"
     "sigs.k8s.io/controller-runtime/pkg/client"
-    "sigs.k8s.io/controller-runtime/pkg/controller"
     "sigs.k8s.io/controller-runtime/pkg/log"
 
     openstackv1alpha1 "github.com/skotnicky/openstack-sre-operator/api/v1alpha1"
@@ -39,34 +38,34 @@ type OpenStackSREReconciler struct {
 //+kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
 //+kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch
 
-func (r *OpenStackSREReconciler) Reconcile(ctx context.Context, req controller.Request) (controller.Result, error) {
+func (r *OpenStackSREReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
     logger := log.FromContext(ctx)
 
     // Fetch the OpenStackSRE resource
     var sre openstackv1alpha1.OpenStackSRE
     if err := r.Get(ctx, req.NamespacedName, &sre); err != nil {
         // If the resource no longer exists, we don’t requeue
-        return controller.Result{}, client.IgnoreNotFound(err)
+        return ctrl.Result{}, client.IgnoreNotFound(err)
     }
 
     // 1. Build an OpenStack provider client via Gophercloud
     provider, err := getOpenStackProvider()
     if err != nil {
         logger.Error(err, "failed to get OpenStack provider")
-        return controller.Result{}, err
+        return ctrl.Result{}, err
     }
 
     computeClient, err := openstack.NewComputeV2(provider, gophercloud.EndpointOpts{})
     if err != nil {
         logger.Error(err, "failed to create compute client")
-        return controller.Result{}, err
+        return ctrl.Result{}, err
     }
 
     // 2. Find all Kubernetes nodes labeled osre=armed
     var nodeList corev1.NodeList
     if err := r.List(ctx, &nodeList, client.MatchingLabels{"osre": "armed"}); err != nil {
         logger.Error(err, "failed to list armed nodes")
-        return controller.Result{}, err
+        return ctrl.Result{}, err
     }
 
     // 3. For each armed node, check if it is "down"
@@ -108,16 +107,16 @@ func (r *OpenStackSREReconciler) Reconcile(ctx context.Context, req controller.R
     sre.Status.LastAction = time.Now().String()
     if err := r.Status().Update(ctx, &sre); err != nil {
         logger.Error(err, "failed to update status")
-        return controller.Result{}, err
+        return ctrl.Result{}, err
     }
 
     // Requeue periodically (e.g., every 60s) or watch for events
-    return controller.Result{RequeueAfter: 60 * time.Second}, nil
+    return ctrl.Result{RequeueAfter: 60 * time.Second}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
-func (r *OpenStackSREReconciler) SetupWithManager(mgr controller.Manager) error {
-    return controller.NewControllerManagedBy(mgr).
+func (r *OpenStackSREReconciler) SetupWithManager(mgr ctrl.Manager) error {
+    return ctrl.NewControllerManagedBy(mgr).
         For(&openstackv1alpha1.OpenStackSRE{}).
         Complete(r)
 }
