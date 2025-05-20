@@ -21,6 +21,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -29,6 +30,7 @@ import (
 
 	hypervisors "github.com/gophercloud/gophercloud/openstack/compute/v2/extensions/hypervisors"
 	openstackv1alpha1 "github.com/skotnicky/openstack-sre-operator/api/v1alpha1"
+	controllerspkg "github.com/skotnicky/openstack-sre-operator/controllers"
 )
 
 var _ = Describe("OpenStackSRE Controller", func() {
@@ -80,6 +82,27 @@ var _ = Describe("OpenStackSRE Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 			// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
 			// Example: If you expect a certain status condition after reconciliation, verify it here.
+		})
+
+		Context("isNodeDown helper", func() {
+			It("returns true for ConditionUnknown", func() {
+				node := corev1.Node{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
+							{
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionUnknown,
+							},
+						},
+					},
+				}
+				Expect(controllerspkg.IsNodeDown(&node)).To(BeTrue())
+			})
+
+			It("returns true when Ready condition missing", func() {
+				node := corev1.Node{}
+				Expect(controllerspkg.IsNodeDown(&node)).To(BeTrue())
+			})
 		})
 	})
 

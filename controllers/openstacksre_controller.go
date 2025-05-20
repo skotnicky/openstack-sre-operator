@@ -82,7 +82,7 @@ func (r *OpenStackSREReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	//    (In a real scenario, you'd map K8s node to an OpenStack hypervisor.)
 	downHypervisors := []corev1.Node{}
 	for _, node := range nodeList.Items {
-		if isNodeDown(&node) {
+		if IsNodeDown(&node) {
 			downHypervisors = append(downHypervisors, node)
 		}
 	}
@@ -144,14 +144,20 @@ func getOpenStackProvider() (*gophercloud.ProviderClient, error) {
 	return provider, nil
 }
 
-// isNodeDown - simplistic check if Node is "NotReady". In production, refine this.
-func isNodeDown(node *corev1.Node) bool {
+// IsNodeDown checks if a node should be considered down based on its Ready
+// condition. It returns true when the Ready condition is False or Unknown, or
+// when no Ready condition is present at all.
+func IsNodeDown(node *corev1.Node) bool {
+	found := false
 	for _, cond := range node.Status.Conditions {
-		if cond.Type == corev1.NodeReady && cond.Status == corev1.ConditionFalse {
-			return true
+		if cond.Type == corev1.NodeReady {
+			found = true
+			if cond.Status == corev1.ConditionFalse || cond.Status == corev1.ConditionUnknown {
+				return true
+			}
 		}
 	}
-	return false
+	return !found
 }
 
 // evacuateHypervisor calls "server evacuate" on each instance in the down hypervisor
