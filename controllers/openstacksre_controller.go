@@ -18,9 +18,11 @@ import (
 	migrate "github.com/gophercloud/gophercloud/openstack/compute/v2/extensions/migrate"
 	"github.com/gophercloud/gophercloud/openstack/compute/v2/servers"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	retry "k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -306,55 +308,59 @@ func (r *OpenStackSREReconciler) proposeAndExecute(
 	lock.Lock()
 	defer lock.Unlock()
 
-	// 1. Get or Create a ConfigMap to track consensus
-	cmName := "openstack-sre-consensus"
-	var cm corev1.ConfigMap
-	err := r.Get(ctx, types.NamespacedName{Name: cmName, Namespace: "default"}, &cm)
-	if err != nil {
-		// If not found, create it
-		cm = corev1.ConfigMap{
-			ObjectMeta: v1.ObjectMeta{
-				Name:      cmName,
-				Namespace: "default",
-			},
-			Data: map[string]string{},
-		}
-		if createErr := r.Create(ctx, &cm); createErr != nil {
-			logger.Error(createErr, "cannot create consensus configmap")
-			return createErr
-		}
-	}
-
-	if cm.Data == nil {
-		cm.Data = map[string]string{}
-	}
-
-	// 2. Read existing votes for actionKey
-	votesStr, found := cm.Data[actionKey]
-	if !found {
-		votesStr = "0"
-	}
-	votes, _ := strconv.Atoi(votesStr)
-
-	// 3. Increment vote (we assume each operator replica tries once)
-	votes++
-	cm.Data[actionKey] = fmt.Sprintf("%d", votes)
-
-	// 4. Update the ConfigMap with new vote count
-	if err := r.Update(ctx, &cm); err != nil {
-		logger.Error(err, "failed to update votes in configmap")
-		return err
-	}
-
-	// 5. If votes >= majority threshold, execute
-	//    e.g. if we expect 3 replicas, majority is 2
+	// Majority calculation is based on the number of replicas. The environment
+	// variable REPLICA_COUNT should be set on each replica (for example via the
+	// downward API) to the same value so that all instances agree on the size of
+	// the cluster.
 	majorityThreshold := 2
-	if replicaCountStr := os.Getenv("REPLICA_COUNT"); replicaCountStr != "" {
+	if replicaCountStr, ok := os.LookupEnv("REPLICA_COUNT"); ok {
 		if rc, err := strconv.Atoi(replicaCountStr); err == nil && rc > 1 {
 			majorityThreshold = (rc / 2) + 1
 		}
 	}
 
+	cmName := "openstack-sre-consensus"
+	var votes int
+
+	// 1. Update votes with retry to handle concurrent updates between replicas
+	err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		var current corev1.ConfigMap
+		getErr := r.Get(ctx, types.NamespacedName{Name: cmName, Namespace: "default"}, &current)
+		if getErr != nil {
+			if apierrors.IsNotFound(getErr) {
+				current = corev1.ConfigMap{
+					ObjectMeta: v1.ObjectMeta{
+						Name:      cmName,
+						Namespace: "default",
+					},
+					Data: map[string]string{},
+				}
+				if createErr := r.Create(ctx, &current); createErr != nil && !apierrors.IsAlreadyExists(createErr) {
+					return createErr
+				}
+			} else {
+				return getErr
+			}
+		}
+
+		if current.Data == nil {
+			current.Data = map[string]string{}
+		}
+
+		votesStr := current.Data[actionKey]
+		v, _ := strconv.Atoi(votesStr)
+		v++
+		votes = v
+		current.Data[actionKey] = fmt.Sprintf("%d", v)
+
+		return r.Update(ctx, &current)
+	})
+	if err != nil {
+		logger.Error(err, "failed to update votes in configmap")
+		return err
+	}
+
+	// 2. Execute action if the majority of replicas have voted
 	if votes >= majorityThreshold {
 		logger.Info("Majority reached, executing action", "actionKey", actionKey)
 		return actionFunc()
