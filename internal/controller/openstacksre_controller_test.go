@@ -41,9 +41,25 @@ var _ = Describe("OpenStackSRE Controller", func() {
 
 		typeNamespacedName := types.NamespacedName{
 			Name:      resourceName,
-			Namespace: "default", // TODO(user):Modify as needed
+			Namespace: "default",
 		}
 		openstacksre := &openstackv1alpha1.OpenStackSRE{}
+
+		nodeName := "node1"
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   nodeName,
+				Labels: map[string]string{"osre": "armed"},
+			},
+			Status: corev1.NodeStatus{
+				Conditions: []corev1.NodeCondition{
+					{
+						Type:   corev1.NodeReady,
+						Status: corev1.ConditionUnknown,
+					},
+				},
+			},
+		}
 
 		BeforeEach(func() {
 			By("creating the custom resource for the Kind OpenStackSRE")
@@ -54,10 +70,16 @@ var _ = Describe("OpenStackSRE Controller", func() {
 						Name:      resourceName,
 						Namespace: "default",
 					},
-					// TODO(user): Specify other spec details if needed.
+					Spec: openstackv1alpha1.OpenStackSRESpec{
+						EvacuationEnabled: true,
+						BalancingEnabled:  true,
+					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 			}
+
+			By("creating a dummy node")
+			Expect(k8sClient.Create(ctx, node)).To(Succeed())
 		})
 
 		AfterEach(func() {
@@ -68,6 +90,12 @@ var _ = Describe("OpenStackSRE Controller", func() {
 
 			By("Cleanup the specific resource instance OpenStackSRE")
 			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+
+			cm := &corev1.ConfigMap{}
+			_ = k8sClient.Get(ctx, types.NamespacedName{Name: "openstack-sre-last-balance", Namespace: "default"}, cm)
+			_ = k8sClient.Delete(ctx, cm)
+
+			_ = k8sClient.Delete(ctx, node)
 		})
 		It("should successfully reconcile the resource", func() {
 			By("Reconciling the created resource")
@@ -80,8 +108,21 @@ var _ = Describe("OpenStackSRE Controller", func() {
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
-			// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
-			// Example: If you expect a certain status condition after reconciliation, verify it here.
+
+			By("verifying status update")
+			updated := &openstackv1alpha1.OpenStackSRE{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, updated)).To(Succeed())
+			Expect(updated.Status.LastAction).NotTo(BeEmpty())
+
+			By("ensuring node was annotated")
+			n := &corev1.Node{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: nodeName}, n)).To(Succeed())
+			Expect(n.Annotations).To(HaveKey("openstack-sre/evacuated-at"))
+
+			By("checking balancing ConfigMap")
+			cm := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "openstack-sre-last-balance", Namespace: "default"}, cm)).To(Succeed())
+			Expect(cm.Data).To(HaveKey("timestamp"))
 		})
 
 		Context("isNodeDown helper", func() {
