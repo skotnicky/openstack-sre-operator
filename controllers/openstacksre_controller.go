@@ -40,9 +40,14 @@ type OpenStackSREReconciler struct {
 
 // hypervisorInfo captures basic load information for a hypervisor within an AZ.
 type hypervisorInfo struct {
-	hypervisors.Hypervisor
-	AZ string
+        hypervisors.Hypervisor
+        AZ string
 }
+
+// HypervisorInfo is an exported alias for hypervisorInfo used in tests.
+// External packages should prefer this alias when interacting with
+// balancing helpers.
+type HypervisorInfo = hypervisorInfo
 
 //+kubebuilder:rbac:groups=openstack.example.com,resources=openstacksres,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=openstack.example.com,resources=openstacksres/status,verbs=get;update;patch
@@ -284,18 +289,24 @@ var lock sync.Mutex
 // selectMigrationPair picks a source and target hypervisor within an AZ if the
 // load difference exceeds the threshold.
 func selectMigrationPair(hosts []hypervisorInfo, threshold int) (hypervisorInfo, hypervisorInfo, bool) {
-	if len(hosts) < 2 {
-		return hypervisorInfo{}, hypervisorInfo{}, false
-	}
-	sort.Slice(hosts, func(i, j int) bool {
-		return hosts[i].RunningVMs > hosts[j].RunningVMs
-	})
-	src := hosts[0]
-	dst := hosts[len(hosts)-1]
-	if (src.RunningVMs - dst.RunningVMs) < threshold {
-		return hypervisorInfo{}, hypervisorInfo{}, false
-	}
-	return src, dst, true
+        if len(hosts) < 2 {
+                return hypervisorInfo{}, hypervisorInfo{}, false
+        }
+        sort.Slice(hosts, func(i, j int) bool {
+                return hosts[i].RunningVMs > hosts[j].RunningVMs
+        })
+        src := hosts[0]
+        dst := hosts[len(hosts)-1]
+        if (src.RunningVMs - dst.RunningVMs) < threshold {
+                return hypervisorInfo{}, hypervisorInfo{}, false
+        }
+        return src, dst, true
+}
+
+// SelectMigrationPair is an exported wrapper around selectMigrationPair for
+// unit testing purposes.
+func SelectMigrationPair(hosts []HypervisorInfo, threshold int) (HypervisorInfo, HypervisorInfo, bool) {
+       return selectMigrationPair(hosts, threshold)
 }
 
 // proposeAndExecute - a naive majority-based mechanism using a ConfigMap as shared state
