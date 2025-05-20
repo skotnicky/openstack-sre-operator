@@ -1,7 +1,7 @@
 package controllers
 
 import (
-    context "context"
+    "context"
     "fmt"
     "os"
     "strconv"
@@ -11,7 +11,7 @@ import (
     "github.com/go-logr/logr"
     "github.com/gophercloud/gophercloud"
     "github.com/gophercloud/gophercloud/openstack"
-    "github.com/gophercloud/gophercloud/openstack/compute/v2/extensions"
+    evacuateext "github.com/gophercloud/gophercloud/openstack/compute/v2/extensions/evacuate"
     "github.com/gophercloud/gophercloud/openstack/compute/v2/servers"
     corev1 "k8s.io/api/core/v1"
     v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -160,8 +160,8 @@ func evacuateHypervisor(ctx context.Context, logger logr.Logger, computeClient *
     }
     for _, srv := range allServers {
         logger.Info("Evacuating server", "server", srv.ID, "hypervisor", hypervisorID)
-        // Gophercloud doesn't have a top-level "evacuate" call by default, but we can use extensions
-        err = extensions.Evacuate(computeClient, srv.ID, extensions.EvacuateOpts{}).ExtractErr()
+        // Use the evacuate extension to move instances off the failed hypervisor
+        err = evacuateext.Evacuate(computeClient, srv.ID, evacuateext.EvacuateOpts{}).ExtractErr()
         if err != nil {
             logger.Error(err, "Evacuation failed", "serverID", srv.ID)
         }
