@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -11,7 +12,10 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/gophercloud/gophercloud"
 	"github.com/gophercloud/gophercloud/openstack"
+	availabilityzones "github.com/gophercloud/gophercloud/openstack/compute/v2/extensions/availabilityzones"
 	evacuateext "github.com/gophercloud/gophercloud/openstack/compute/v2/extensions/evacuate"
+	hypervisors "github.com/gophercloud/gophercloud/openstack/compute/v2/extensions/hypervisors"
+	migrate "github.com/gophercloud/gophercloud/openstack/compute/v2/extensions/migrate"
 	"github.com/gophercloud/gophercloud/openstack/compute/v2/servers"
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -30,6 +34,12 @@ type OpenStackSREReconciler struct {
 	Scheme *runtime.Scheme
 	// You may want a cached Gophercloud client or pass in credentials
 	// from a Secret. For simplicity, we'll create a new session each time.
+}
+
+// hypervisorInfo captures basic load information for a hypervisor within an AZ.
+type hypervisorInfo struct {
+	hypervisors.Hypervisor
+	AZ string
 }
 
 //+kubebuilder:rbac:groups=openstack.example.com,resources=openstacksres,verbs=get;list;watch;create;update;patch;delete
@@ -96,7 +106,7 @@ func (r *OpenStackSREReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	//    This logic can be expanded to check instance distribution, anti-affinity, etc.
 	if sre.Spec.BalancingEnabled {
 		err := r.proposeAndExecute(ctx, logger, "rebalance-instances", func() error {
-			return rebalanceInstances(ctx, logger, computeClient)
+			return rebalanceInstances(ctx, logger, computeClient, sre.Spec.BalanceThreshold, sre.Spec.PreferredAZs)
 		})
 		if err != nil {
 			logger.Error(err, "failed to rebalance instances")
@@ -170,20 +180,115 @@ func evacuateHypervisor(ctx context.Context, logger logr.Logger, computeClient *
 }
 
 // rebalanceInstances tries to live-migrate servers to level the load
-func rebalanceInstances(ctx context.Context, logger logr.Logger, computeClient *gophercloud.ServiceClient) error {
-	// For example, we could:
-	// 1. List all hypervisors, check the number of running VMs
-	// 2. Identify the most loaded vs. least loaded
-	// 3. Use servers.Migrate / servers.LiveMigrate to move some VMs
-	// 4. Check anti-affinity/availability zone constraints
-	// This is a simplified placeholder
+func rebalanceInstances(ctx context.Context, logger logr.Logger, computeClient *gophercloud.ServiceClient, threshold int, preferredAZs []string) error {
+	if threshold <= 0 {
+		threshold = 1
+	}
 
-	logger.Info("Balancing load among hypervisors (placeholder)")
-	// ...
-	return nil
+	// 1. Map hypervisor hostname -> availability zone
+	azPages, err := availabilityzones.ListDetail(computeClient).AllPages()
+	if err != nil {
+		return err
+	}
+	azList, err := availabilityzones.ExtractAvailabilityZones(azPages)
+	if err != nil {
+		return err
+	}
+
+	hostAZ := make(map[string]string)
+	for _, az := range azList {
+		// If preferred AZs are specified, skip others
+		if len(preferredAZs) > 0 {
+			found := false
+			for _, p := range preferredAZs {
+				if p == az.ZoneName {
+					found = true
+					break
+				}
+			}
+			if !found {
+				continue
+			}
+		}
+
+		for host := range az.Hosts {
+			hostAZ[host] = az.ZoneName
+		}
+	}
+
+	// 2. List hypervisors and group by AZ
+	hvPages, err := hypervisors.List(computeClient, nil).AllPages()
+	if err != nil {
+		return err
+	}
+	hvList, err := hypervisors.ExtractHypervisors(hvPages)
+	if err != nil {
+		return err
+	}
+
+	azMap := map[string][]hypervisorInfo{}
+	for _, hv := range hvList {
+		az := hostAZ[hv.HypervisorHostname]
+		info := hypervisorInfo{Hypervisor: hv, AZ: az}
+		azMap[az] = append(azMap[az], info)
+	}
+
+	var aggErr error
+	// 3. For each AZ, pick src/dst hosts and migrate
+	for az, hosts := range azMap {
+		src, dst, ok := selectMigrationPair(hosts, threshold)
+		if !ok {
+			continue
+		}
+
+		logger.Info("Balancing", "az", az, "source", src.HypervisorHostname, "target", dst.HypervisorHostname)
+
+		// List servers on the source host
+		srvPages, err := servers.List(computeClient, servers.ListOpts{Host: src.HypervisorHostname}).AllPages()
+		if err != nil {
+			aggErr = fmt.Errorf("%v; %w", aggErr, err)
+			continue
+		}
+		srvList, err := servers.ExtractServers(srvPages)
+		if err != nil {
+			aggErr = fmt.Errorf("%v; %w", aggErr, err)
+			continue
+		}
+		if len(srvList) == 0 {
+			continue
+		}
+
+		// Migrate a single instance from src to dst
+		srv := srvList[0]
+		migErr := migrate.LiveMigrate(computeClient, srv.ID, migrate.LiveMigrateOpts{Host: &dst.HypervisorHostname}).ExtractErr()
+		if migErr != nil {
+			logger.Error(migErr, "migration failed", "server", srv.ID)
+			aggErr = fmt.Errorf("%v; %w", aggErr, migErr)
+			continue
+		}
+		logger.Info("Migrated server", "server", srv.ID, "from", src.HypervisorHostname, "to", dst.HypervisorHostname)
+	}
+	return aggErr
 }
 
 var lock sync.Mutex
+
+// selectMigrationPair picks a source and target hypervisor within an AZ if the
+// load difference exceeds the threshold.
+func selectMigrationPair(hosts []hypervisorInfo, threshold int) (hypervisorInfo, hypervisorInfo, bool) {
+	if len(hosts) < 2 {
+		return hypervisorInfo{}, hypervisorInfo{}, false
+	}
+	sort.Slice(hosts, func(i, j int) bool {
+		return hosts[i].RunningVMs > hosts[j].RunningVMs
+	})
+	src := hosts[0]
+	dst := hosts[len(hosts)-1]
+	if (src.RunningVMs - dst.RunningVMs) < threshold {
+		return hypervisorInfo{}, hypervisorInfo{}, false
+	}
+	return src, dst, true
+}
 
 // proposeAndExecute - a naive majority-based mechanism using a ConfigMap as shared state
 func (r *OpenStackSREReconciler) proposeAndExecute(
