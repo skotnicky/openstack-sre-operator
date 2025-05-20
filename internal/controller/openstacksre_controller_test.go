@@ -27,6 +27,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	hypervisors "github.com/gophercloud/gophercloud/openstack/compute/v2/extensions/hypervisors"
 	openstackv1alpha1 "github.com/skotnicky/openstack-sre-operator/api/v1alpha1"
 )
 
@@ -79,6 +80,22 @@ var _ = Describe("OpenStackSRE Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 			// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
 			// Example: If you expect a certain status condition after reconciliation, verify it here.
+		})
+	})
+
+	var _ = Describe("Balancing logic", func() {
+		It("selects hosts when difference exceeds threshold", func() {
+			hosts := []hypervisorInfo{
+				{Hypervisor: hypervisors.Hypervisor{HypervisorHostname: "hv1", RunningVMs: 10}, AZ: "nova"},
+				{Hypervisor: hypervisors.Hypervisor{HypervisorHostname: "hv2", RunningVMs: 2}, AZ: "nova"},
+			}
+			src, dst, ok := selectMigrationPair(hosts, 5)
+			Expect(ok).To(BeTrue())
+			Expect(src.HypervisorHostname).To(Equal("hv1"))
+			Expect(dst.HypervisorHostname).To(Equal("hv2"))
+
+			_, _, ok = selectMigrationPair(hosts, 20)
+			Expect(ok).To(BeFalse())
 		})
 	})
 })

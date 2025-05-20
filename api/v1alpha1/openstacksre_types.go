@@ -1,21 +1,27 @@
 package v1alpha1
 
 import (
-    metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // OpenStackSRESpec defines the desired state of OpenStackSRE
 type OpenStackSRESpec struct {
-    // If you want some configuration toggles, place them here.
-    // E.g. we can specify a "BalancingMode" or "EvacuationEnabled", etc.
-    EvacuationEnabled bool `json:"evacuationEnabled,omitempty"`
-    BalancingEnabled  bool `json:"balancingEnabled,omitempty"`
+	// If you want some configuration toggles, place them here.
+	// E.g. we can specify a "BalancingMode" or "EvacuationEnabled", etc.
+	EvacuationEnabled bool `json:"evacuationEnabled,omitempty"`
+	BalancingEnabled  bool `json:"balancingEnabled,omitempty"`
+	// BalanceThreshold defines the difference in running VMs between two
+	// hypervisors in the same AZ that will trigger a migration.
+	BalanceThreshold int `json:"balanceThreshold,omitempty"`
+	// PreferredAZs specifies the availability zones that should be considered
+	// for balancing, in priority order. If empty all zones are considered.
+	PreferredAZs []string `json:"preferredAZs,omitempty"`
 }
 
 // OpenStackSREStatus defines the observed state of OpenStackSRE
 type OpenStackSREStatus struct {
-    // A list of hypervisors that were evacuated, time-stamped events, etc.
-    LastAction string `json:"lastAction,omitempty"`
+	// A list of hypervisors that were evacuated, time-stamped events, etc.
+	LastAction string `json:"lastAction,omitempty"`
 }
 
 //+kubebuilder:object:root=true
@@ -23,18 +29,18 @@ type OpenStackSREStatus struct {
 
 // OpenStackSRE is the Schema for the openstacksres API
 type OpenStackSRE struct {
-    metav1.TypeMeta   `json:",inline"`
-    metav1.ObjectMeta `json:"metadata,omitempty"`
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-    Spec   OpenStackSRESpec   `json:"spec,omitempty"`
-    Status OpenStackSREStatus `json:"status,omitempty"`
+	Spec   OpenStackSRESpec   `json:"spec,omitempty"`
+	Status OpenStackSREStatus `json:"status,omitempty"`
 }
 
 //+kubebuilder:object:root=true
 
 // OpenStackSREList contains a list of OpenStackSRE
 type OpenStackSREList struct {
-    metav1.TypeMeta `json:",inline"`
-    metav1.ListMeta `json:"metadata,omitempty"`
-    Items           []OpenStackSRE `json:"items"`
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []OpenStackSRE `json:"items"`
 }
